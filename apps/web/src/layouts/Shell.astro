@@ -1,0 +1,67 @@
+---
+import "../styles/app.css";
+
+interface Props {
+  title: string;
+  /**
+   * `full` fills the viewport - right for the board, which is a dashboard and
+   * wants every pixel. `readable` caps and centres the column, right for the
+   * form-and-list pages where a 1900px-wide text input reads badly.
+   */
+  width?: "full" | "readable";
+}
+
+const { title, width = "full" } = Astro.props;
+const path = Astro.url.pathname;
+
+/**
+ * One page, one role - so there is never a question of where a given control
+ * lives, for the user or for whoever debugs the layout later.
+ *   Board    operate the queue
+ *   Intake   get work in - files, manual jobs, and the machines that run them
+ *   Records  what was done, for whom, and what it cost
+ *
+ * Printers had its own page briefly. It was one short form and a list, and it
+ * split "setting up work" across two places for no benefit; the machines are
+ * part of intake.
+ */
+const nav = [
+  { href: "/", label: "Board" },
+  { href: "/intake", label: "Intake" },
+  { href: "/records", label: "Records" },
+];
+
+const isCurrent = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title} · Printflow</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">Printflow <span>Bambu queue</span></div>
+        <nav class="nav">
+          {
+            nav.map((item) => (
+              <a href={item.href} aria-current={isCurrent(item.href) ? "page" : undefined}>
+                {item.label}
+              </a>
+            ))
+          }
+        </nav>
+        <div class="topbar-spacer"></div>
+        <slot name="topbar" />
+      </header>
+      <main class:list={["main", width]}>
+        <slot />
+      </main>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

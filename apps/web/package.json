@@ -1,0 +1,32 @@
+{
+  "name": "@bambu-organize/web",
+  "type": "module",
+  "version": "0.0.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "wrangler types && astro dev",
+    "build": "wrangler types && astro check && astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "types": "wrangler types",
+    "check": "wrangler types && astro check",
+    "db:apply:local": "wrangler d1 migrations apply bambu_organize --local",
+    "db:apply:remote": "wrangler d1 migrations apply bambu_organize --remote"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^14.2.0",
+    "@bambu-organize/db": "workspace:*",
+    "@bambu-organize/shared": "workspace:*",
+    "astro": "^7.2.0",
+    "drizzle-orm": "1.0.0-rc.4",
+    "hono": "^4.13.1",
+    "wrangler": "^4.120.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^5.9.3"
+  }
+}

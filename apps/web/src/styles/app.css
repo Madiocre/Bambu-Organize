@@ -1,0 +1,373 @@
+/* Design tokens. Dark by default - this is a workshop wall display as much as
+   a browser tab, and a bright page next to a printer is unpleasant at night. */
+:root {
+  color-scheme: dark;
+
+  --bg: #0d1014;
+  --bg-raised: #141920;
+  --bg-sunken: #0a0d11;
+  --surface: #1a212b;
+  --surface-hover: #212a36;
+  --border: #263040;
+  --border-strong: #35435a;
+
+  --text: #e6edf5;
+  --text-dim: #98a4b5;
+  --text-faint: #64718a;
+
+  --accent: #4ea3ff;
+  --running: #3ddc84;
+
+  /* Deadline flags, keyed on slack (time left minus the print itself), not
+     raw clock. Red reuses --danger and green reuses --running so the palette
+     does not grow a second set of near-identical hues. */
+  --flag-imminent: #ff8c42;
+  --flag-soon: #ffd23f;
+  --flag-longterm: #6b7a90;
+  --warn: #ffb454;
+  --danger: #ff6b6b;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --gap: 14px;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* --- app chrome ---------------------------------------------------------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 20px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text);
+}
+.brand span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+}
+.nav a {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.nav a:hover {
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.nav a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.main {
+  flex: 1;
+  padding: 18px 20px 32px;
+  width: 100%;
+}
+
+/* Constrained pages centre their column. `max-width` without auto margins is
+   what left a dead strip down the right-hand side of the intake page. */
+.main.readable {
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+/* Page header: title plus a one-line statement of what the page is for.
+   Each page has exactly one role, and this is where it says so. */
+.page-head {
+  margin-bottom: var(--gap);
+}
+.page-head h1 {
+  font-size: 17px;
+}
+.page-head p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  max-width: 78ch;
+}
+.page-head .head-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.page-head .head-row .spacer {
+  flex: 1;
+}
+
+/* --- generic bits -------------------------------------------------------- */
+
+.panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-head h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+.panel-head .count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.panel-head .spacer {
+  flex: 1;
+}
+
+.panel-body {
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 90px;
+  padding: 16px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+button,
+.btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+button:hover,
+.btn:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #07131f;
+  font-weight: 600;
+}
+button.primary:hover {
+  filter: brightness(1.08);
+}
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 4px 7px;
+}
+button.ghost:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+button.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  width: 100%;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -1px;
+}
+label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.field {
+  margin-bottom: 12px;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.tag.file {
+  color: var(--running);
+  background: color-mix(in srgb, var(--running) 14%, transparent);
+}
+.tag.manual {
+  color: var(--text-dim);
+}
+.tag.warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+}
+.tag.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+.swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: inline-block;
+  flex: none;
+}
+
+.summary-risk {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- toast --------------------------------------------------------------- */
+
+#toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+  z-index: 100;
+  max-width: min(520px, 90vw);
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+#toast.error {
+  border-color: var(--danger);
+  color: #ffd7d7;
+}

@@ -1,0 +1,26 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"compatibility_date": "2026-08-08",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"name": "web",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "bambu_organize",
+			"database_id": "0ad7db59-f83b-43d8-8535-cdcc231dba70",
+			// drizzle-kit owns packages/db/migrations; migrations-d1 is the
+			// flat mirror wrangler can read (see scripts/sync-d1-migrations.mjs).
+			"migrations_dir": "../../../../packages/db/migrations-d1"
+		}
+	]
+}

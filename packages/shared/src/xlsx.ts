@@ -1,0 +1,216 @@
+/**
+ * A minimal .xlsx writer.
+ *
+ * Enough SpreadsheetML for a flat table with a bold header row, real numbers,
+ * and real dates - which is the whole point of exporting Excel rather than
+ * CSV: a date stays a date and a duration stays sortable, instead of Excel
+ * guessing from text and getting it wrong.
+ *
+ * Strings are written inline rather than through a shared-strings table.
+ * That is slightly larger on disk and much smaller in code, and an export of
+ * a print queue is never big enough for the difference to matter.
+ */
+
+import { createZip } from "./zip-write.js";
+
+export type CellValue = string | number | Date | null | undefined;
+
+export interface SheetColumn {
+  header: string;
+  /** Approximate character width, as Excel counts it */
+  width?: number;
+}
+
+export interface Sheet {
+  name: string;
+  columns: SheetColumn[];
+  rows: CellValue[][];
+}
+
+/** Style indexes, matching the `cellXfs` order in `stylesXml` below. */
+const STYLE_DEFAULT = 0;
+const STYLE_HEADER = 1;
+const STYLE_DATETIME = 2;
+
+/**
+ * One sheet or several. A monthly report wants a summary *and* the detail
+ * behind it, and two files for one report is worse than two tabs.
+ */
+export function createXlsx(
+  input: Sheet | Sheet[],
+  created: Date = new Date(),
+): Uint8Array<ArrayBuffer> {
+  const sheets = Array.isArray(input) ? input : [input];
+  if (sheets.length === 0) throw new Error("A workbook needs at least one sheet");
+
+  const encoder = new TextEncoder();
+  const file = (name: string, xml: string) => ({ name, data: encoder.encode(xml) });
+
+  return createZip(
+    [
+      file("[Content_Types].xml", contentTypesXml(sheets.length)),
+      file("_rels/.rels", rootRelsXml()),
+      file("xl/workbook.xml", workbookXml(sheets)),
+      file("xl/_rels/workbook.xml.rels", workbookRelsXml(sheets.length)),
+      file("xl/styles.xml", stylesXml()),
+      ...sheets.map((sheet, i) => file(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheet))),
+    ],
+    created,
+  );
+}
+
+/** 1 -> A, 26 -> Z, 27 -> AA. Excel's column naming is bijective base-26. */
+export function columnName(index: number): string {
+  let name = "";
+  let n = index;
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+    // Control characters are not legal in XML 1.0 and Excel rejects the file
+    // outright if any slip through from a pasted job title.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+
+/**
+ * Excel's date serial: days since 1899-12-30, in the workbook's own timezone.
+ * We convert from UTC using the local offset so a deadline shows the same
+ * wall-clock time in the sheet as it does on the board.
+ */
+function excelSerial(date: Date): number {
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return (date.getTime() - offsetMs) / 86_400_000 + 25569;
+}
+
+function cellXml(ref: string, value: CellValue, style: number): string {
+  if (value === null || value === undefined || value === "") {
+    return style === STYLE_DEFAULT ? "" : `<c r="${ref}" s="${style}"/>`;
+  }
+
+  if (value instanceof Date) {
+    return `<c r="${ref}" s="${STYLE_DATETIME}"><v>${excelSerial(value)}</v></c>`;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `<c r="${ref}"${style ? ` s="${style}"` : ""}><v>${value}</v></c>`;
+  }
+
+  const text = escapeXml(String(value));
+  return `<c r="${ref}"${style ? ` s="${style}"` : ""} t="inlineStr"><is><t xml:space="preserve">${text}</t></is></c>`;
+}
+
+function sheetXml(sheet: Sheet): string {
+  const cols = sheet.columns
+    .map((column, index) =>
+      column.width
+        ? `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`
+        : "",
+    )
+    .join("");
+
+  const header = sheet.columns
+    .map((column, index) => cellXml(`${columnName(index + 1)}1`, column.header, STYLE_HEADER))
+    .join("");
+
+  const body = sheet.rows
+    .map((row, rowIndex) => {
+      const number = rowIndex + 2;
+      const cells = row
+        .map((value, index) => cellXml(`${columnName(index + 1)}${number}`, value, STYLE_DEFAULT))
+        .join("");
+      return `<row r="${number}">${cells}</row>`;
+    })
+    .join("");
+
+  const lastColumn = columnName(Math.max(1, sheet.columns.length));
+  const lastRow = sheet.rows.length + 1;
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<dimension ref="A1:${lastColumn}${lastRow}"/>
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+${cols ? `<cols>${cols}</cols>` : ""}
+<sheetData><row r="1">${header}</row>${body}</sheetData>
+<autoFilter ref="A1:${lastColumn}${lastRow}"/>
+</worksheet>`;
+}
+
+function contentTypesXml(sheetCount: number): string {
+  const overrides = Array.from(
+    { length: sheetCount },
+    (_, i) =>
+      `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+  ).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+${overrides}
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+}
+
+function rootRelsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+}
+
+function workbookXml(sheets: Sheet[]): string {
+  const entries = sheets
+    .map((sheet, i) => {
+      // Excel rejects sheet names over 31 chars or containing []:*?/\
+      const safe =
+        escapeXml(sheet.name.replace(/[[\]:*?/\\]/g, "-").slice(0, 31)) || `Sheet${i + 1}`;
+      return `<sheet name="${safe}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`;
+    })
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>${entries}</sheets>
+</workbook>`;
+}
+
+function workbookRelsXml(sheetCount: number): string {
+  const sheetRels = Array.from(
+    { length: sheetCount },
+    (_, i) =>
+      `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`,
+  ).join("");
+  // Styles takes the id after the last worksheet.
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${sheetRels}
+<Relationship Id="rId${sheetCount + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+}
+
+function stylesXml(): string {
+  // numFmtId 22 is the built-in "m/d/yy h:mm" date-time format.
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
+<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<borders count="1"><border/></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="3">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="22" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+</cellXfs>
+</styleSheet>`;
+}

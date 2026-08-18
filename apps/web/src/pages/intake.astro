@@ -1,0 +1,542 @@
+---
+import { asc, inArray } from "drizzle-orm";
+import { filePlates, jobs, plateFilaments, printFiles, printers, printerStatus } from "@bambu-organize/db";
+import { queueAnchor, queuedMinutes, type Job, type PrinterStatus } from "@bambu-organize/shared";
+import Shell from "../layouts/Shell.astro";
+import { getDb } from "../server/context.js";
+
+export const prerender = false;
+
+// Same pattern as the board: read D1 directly for first paint, hand the
+// payload to the client script, and never round-trip our own API on load.
+const db = getDb();
+const [printerRows, fileRows] = await Promise.all([
+  db.select().from(printers).orderBy(asc(printers.sortOrder)),
+  db.select().from(printFiles).orderBy(asc(printFiles.createdAt)),
+]);
+
+const plateRows = fileRows.length
+  ? await db
+      .select()
+      .from(filePlates)
+      .where(inArray(filePlates.fileId, fileRows.map((file) => file.id)))
+  : [];
+const filamentRows = plateRows.length
+  ? await db
+      .select()
+      .from(plateFilaments)
+      .where(inArray(plateFilaments.plateId, plateRows.map((plate) => plate.id)))
+  : [];
+
+// Everything needed to answer "when could I promise this?" without a round
+// trip per keystroke: when the printer frees up, and how much work is already
+// committed ahead of anything new.
+const [jobRows, statusRows] = await Promise.all([
+  db.select().from(jobs),
+  db.select().from(printerStatus),
+]);
+const anchor = queueAnchor(
+  jobRows as unknown as Job[],
+  (statusRows[0] as unknown as PrinterStatus) ?? null,
+);
+
+const intake = {
+  schedule: {
+    anchorIso: anchor.toISOString(),
+    queuedMinutes: queuedMinutes(jobRows as unknown as Job[]),
+  },
+  printers: printerRows,
+  files: fileRows
+    .map((file) => ({
+      ...file,
+      plates: plateRows
+        .filter((plate) => plate.fileId === file.id)
+        .sort((a, b) => a.plateIndex - b.plateIndex)
+        .map((plate) => ({
+          ...plate,
+          filaments: filamentRows
+            .filter((filament) => filament.plateId === plate.id)
+            .sort((a, b) => a.filamentIndex - b.filamentIndex),
+        })),
+    }))
+    .reverse(),
+};
+---
+
+<Shell title="Intake" width="readable">
+  <div class="page-head">
+    <div class="head-row">
+      <div>
+        <h1>Intake</h1>
+        <p>
+          Getting work into the queue: drop a .3mf and its plates become jobs with the slicer's
+          own print times, add one by hand when there is no file yet, and register the machines
+          that run them. Ordering happens on the <a href="/">board</a>.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>From a .3mf</h2>
+      <span class="count">print time, filament and printer model come out of the file</span>
+    </div>
+    <div class="panel-body">
+      <div class="dropzone" data-dropzone>
+        <strong>Drop a .3mf here</strong>
+        <span
+          >Bambu Studio writes the slicer's own time estimate into
+          <code>Metadata/slice_info.config</code>. We read it per plate, so a four-plate project
+          becomes four jobs with real durations.</span
+        >
+        <input type="file" accept=".3mf" data-file-input hidden />
+      </div>
+      <p class="upload-status" data-upload-status></p>
+      <div data-files class="files"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Add a job by hand</h2>
+      <span class="count">for prints with no file yet</span>
+    </div>
+    <div class="panel-body">
+      <form data-manual-form class="manual-form">
+        <div class="field span-2">
+          <label for="title">Title</label>
+          <input id="title" name="title" required placeholder="Bracket v3" />
+        </div>
+
+        <div class="field">
+          <label for="hours">Print time</label>
+          <div class="duration-input">
+            <input id="hours" name="hours" type="number" min="0" max="720" value="2" />
+            <span>h</span>
+            <input name="minutes" type="number" min="0" max="59" value="0" />
+            <span>m</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="copies">Copies</label>
+          <input id="copies" name="copies" type="number" min="1" max="999" value="1" />
+        </div>
+
+        <div class="field">
+          <label for="bufferMin">Changeover</label>
+          <input id="bufferMin" name="bufferMin" type="number" min="0" max="600" value="15" />
+        </div>
+
+        <div class="field">
+          <label for="printerId">Printer</label>
+          <select id="printerId" name="printerId"></select>
+        </div>
+
+        <div class="field">
+          <label for="status">Goes to</label>
+          <select id="status" name="status">
+            <option value="backlog">Inbox</option>
+            <option value="queued">Queue</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="deadline">Deadline</label>
+          <input id="deadline" name="deadline" type="datetime-local" />
+        </div>
+
+        <div class="field">
+          <label for="requestedBy">Requested by</label>
+          <input id="requestedBy" name="requestedBy" placeholder="Who wants it" />
+        </div>
+
+        <div class="field span-2">
+          <label for="notes">Notes</label>
+          <textarea id="notes" name="notes" rows="2" placeholder="Filament, plate, anything else"
+          ></textarea>
+        </div>
+
+        <div class="promise span-2" data-promise="manual">
+          <span class="promise-label">If you queue this now</span>
+          <span class="promise-value mono" data-promise-queued>—</span>
+          <span class="promise-alt" data-promise-rushed></span>
+        </div>
+
+        <div class="form-actions span-2">
+          <label class="checkbox">
+            <input type="checkbox" name="rush" />
+            <span>Rush — sorts to the front of the inbox</span>
+          </label>
+          <span class="spacer"></span>
+          <button class="primary" type="submit">Add job</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Printers</h2>
+      <span class="count"><span data-printer-count>0</span> registered · the model code is how a
+        dropped file is matched to a machine</span>
+    </div>
+    <div class="panel-body">
+      <div data-printers class="printer-list"></div>
+
+      <form data-printer-form class="printer-form">
+        <div class="field">
+          <label for="modelCode">Model</label>
+          <select id="modelCode" name="modelCode" data-model-select></select>
+        </div>
+        <div class="field">
+          <label for="printerName">Name</label>
+          <input id="printerName" name="name" required placeholder="Workshop X1C" />
+        </div>
+        <div class="field">
+          <label for="nozzle">Nozzle (mm)</label>
+          <select id="nozzle" name="nozzleDiameterMm">
+            <option value="0.2">0.2</option>
+            <option value="0.4" selected>0.4</option>
+            <option value="0.6">0.6</option>
+            <option value="0.8">0.8</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="extruderCount">Extruders</label>
+          <input id="extruderCount" name="extruderCount" type="number" min="1" max="4" value="1" />
+        </div>
+        <div class="field">
+          <label for="serialNumber">Serial</label>
+          <input id="serialNumber" name="serialNumber" placeholder="optional" />
+        </div>
+        <div class="field">
+          <label for="ipAddress">LAN address</label>
+          <input id="ipAddress" name="ipAddress" placeholder="optional, for later" />
+        </div>
+        <div class="field printer-submit">
+          <label class="checkbox">
+            <input type="checkbox" name="hasAms" />
+            <span>Has an AMS</span>
+          </label>
+          <button type="submit">Add printer</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <script is:inline type="application/json" id="intake-data" set:html={JSON.stringify(intake)} />
+  <script>
+    import { initIntake } from "../scripts/intake";
+
+    const raw = document.getElementById("intake-data")?.textContent ?? "{}";
+    initIntake(JSON.parse(raw));
+  </script>
+</Shell>
+
+<style>
+  .panel + .panel {
+    margin-top: var(--gap);
+  }
+
+  .dropzone {
+    display: grid;
+    gap: 6px;
+    place-items: center;
+    text-align: center;
+    padding: 26px 20px;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+    cursor: pointer;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+  .dropzone:hover {
+    border-color: var(--accent);
+  }
+  .dropzone strong {
+    font-size: 15px;
+  }
+  .dropzone span {
+    max-width: 62ch;
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+  .dropzone code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+
+  .upload-status {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    min-height: 1.2em;
+  }
+
+  /* A fixed four-column grid rather than auto-fit: inputs this small should
+     never stretch to fill a 1900px screen just because there is room. */
+  .manual-form {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0 12px;
+    align-items: start;
+  }
+  .manual-form .span-2 {
+    grid-column: span 2;
+  }
+  /* Four columns need roughly 1000px before the hours/minutes pair and the
+     number inputs start feeling cramped. */
+  @media (max-width: 1000px) {
+    .manual-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 560px) {
+    .manual-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .manual-form .span-2 {
+      grid-column: span 1;
+    }
+  }
+
+  .duration-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .duration-input span {
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  /* The date a client-facing person can actually quote. It sits directly above
+     the submit button because it is the last thing worth checking before
+     committing to a customer. */
+  .promise {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 2px 0 12px;
+    padding: 9px 11px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+  }
+  .promise-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-faint);
+  }
+  .promise-value {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .promise-alt {
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+
+  .form-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 2px;
+  }
+  .form-actions .spacer {
+    flex: 1;
+  }
+  .form-actions .checkbox {
+    margin-bottom: 0;
+  }
+
+  .checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+  }
+  .checkbox input {
+    width: auto;
+  }
+
+  .printer-form {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 12px;
+    align-items: end;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .printer-submit {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  @media (max-width: 820px) {
+    .printer-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
+
+<style is:global>
+  /* Client-rendered blocks, so unscoped - same reason as the board's cards. */
+
+  .files {
+    margin-top: 14px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .file {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+  }
+  .file > summary {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 12px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .file > summary::-webkit-details-marker {
+    display: none;
+  }
+  .file-name {
+    font-weight: 550;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40ch;
+  }
+  .spacer {
+    flex: 1;
+  }
+
+  .plates {
+    display: grid;
+    gap: 6px;
+    padding: 0 12px 10px;
+  }
+
+  .plate {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    cursor: pointer;
+  }
+  .plate:hover {
+    background: var(--bg-raised);
+  }
+  .plate input {
+    width: auto;
+    margin-top: 3px;
+  }
+  .plate-unusable {
+    opacity: 0.55;
+  }
+
+  .plate-thumb {
+    width: 54px;
+    height: 54px;
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  .plate-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .plate-body {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .plate-title {
+    font-weight: 550;
+    font-size: 13px;
+  }
+  .plate-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 9px;
+    font-size: 12px;
+  }
+
+  /* Job metadata the .3mf cannot carry, captured once per batch. */
+  /* Printer registry, rendered by the client script so unscoped. */
+  .printer-list {
+    display: grid;
+    gap: 6px;
+  }
+  .printer-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 9px;
+    padding: 8px 10px;
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+  }
+  .printer-row .spacer {
+    flex: 1;
+  }
+  .printer-name {
+    font-weight: 550;
+    font-size: 13px;
+  }
+
+  .plate-form {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0 12px;
+    padding: 10px 12px 12px;
+    margin: 4px 12px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+  }
+  .plate-form .span-all {
+    grid-column: 1 / -1;
+  }
+  .plate-form .field {
+    margin-bottom: 10px;
+  }
+  .plate-form-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .plate-form-actions .spacer {
+    flex: 1;
+  }
+  .plate-form-actions .checkbox {
+    margin-bottom: 0;
+  }
+  @media (max-width: 1000px) {
+    .plate-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
