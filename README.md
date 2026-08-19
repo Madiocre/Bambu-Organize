@@ -1,36 +1,164 @@
-# Printflow — Bambu queue
+# Printflow
 
-Work management for a small 3D-printing workshop. Jobs are added by hand or by
-dropping a `.3mf` on the intake page, where the slicer's own print-time
-estimate is read straight out of the file, then ordered on a drag-and-drop
-board that projects when each one will finish.
+**Work management for a small 3D-printing workshop.** Drop a `.3mf` on it and
+the slicer's own print-time estimate becomes a scheduled job with a real
+deadline, a client, and a cost.
 
-The queue is the foundation, not the point. Bambu Farm Manager already handles
-machines — monitoring, batch control, queueing — for free. What it has no
-concept of is **customers, orders, due dates or money**, and that is the layer
-this is growing into: who asked for a print, when it is due, what it cost.
-Reading the printers is a supporting feature so the schedule stops lying, not
-the destination. See `CLAUDE.md` for the positioning and roadmap.
+Bambu Farm Manager already handles machines — monitoring, batch control,
+queueing — for free. What it has no concept of is **customers, orders, due
+dates or money**. That is the gap Printflow fills: it is the only one of these
+tools that knows a job is *due*, and therefore the only one that can tell you
+whether the order you have chosen will break a promise.
+
+<!-- IMAGE: the board at ~1600px wide, with a few jobs in the inbox, three or
+     four in the queue showing pressure chips, and one printing with the
+     countdown mid-run. This is the hero shot — it should be readable at a
+     glance and is the single most self-explanatory image in the repo. -->
+![The board](docs/images/board.png)
+
+---
+
+## What it does
+
+**Get work in**
+- Drop a `.3mf` — print time, filament type and weight, plate previews and the
+  printer model it was sliced for are read straight out of the file
+- One job per plate, so a four-plate project becomes four schedulable jobs
+- Add jobs by hand when there is no file yet
+- Client, deadline and notes are captured at intake — the `.3mf` carries none
+  of them
+
+**Order it**
+- Drag-and-drop board: inbox → queue → printing
+- Every queued job shows how much slack it has left, as an instruction
+- Live countdown on the running print
+- Projected start and finish for everything behind it
+
+**Know what it cost**
+- Per-client history: jobs, machine time, filament, spend
+- Filament priced per material type
+- Excel exports, including a two-sheet report for the previous month
+
+---
+
+## The idea
+
+A spreadsheet with a due-date column is a genuinely good baseline, and it beats
+most software. It tells you *that* a job is due Thursday.
+
+What it cannot tell you is that Thursday **stops being possible** once one more
+job goes in front of it.
+
+That is the whole product. Printflow knows how long each job takes, in what
+order they will run, and when each one is due — so it can answer two questions
+nothing else on a workshop bench answers:
+
+**"Where does this have to go?"** Every queued job with a deadline shows its
+remaining headroom as an instruction, not a warning:
+
+| Chip | Meaning |
+| --- | --- |
+| `move up 2` | misses its deadline here; moving it up 2 places fixes it |
+| `45m spare` | only 45 minutes of extra work fits ahead of it before it slips |
+| `2d 5h spare` | comfortable |
+| `can't make it` | misses even as the very next print — the date needs re-agreeing |
+
+**"What can I promise?"** At intake, before a date is agreed with a customer:
+*"if you queue this now, ready 08:54 tomorrow — 23:24 today if it jumps the
+queue."* Computed from the work already committed to the machine.
+
+Deadline colours are keyed on **slack**, not the clock — time until the
+deadline *minus* how long the print takes. A four-hour job due tomorrow at
+21:00 turns orange at 17:00 today, not at 21:00.
+
+<!-- IMAGE: a simple left-to-right diagram, ~1200px wide:
+     .3mf  →  parsed metadata (time · filament · model)  →  job (+ client, deadline)
+           →  projected schedule (start · finish · slack)
+     Hand-drawn or Excalidraw is fine; it explains the core idea faster than prose. -->
+![How a file becomes a scheduled job](docs/images/pipeline.png)
+
+---
+
+## Screens
+
+**Intake** — drop a file, review what came out of it, create jobs.
+
+<!-- IMAGE: intake at ~1400px, with a .3mf expanded showing plate thumbnails,
+     print times, filament chips, and the "ready by" promise line filled in. -->
+![Intake](docs/images/intake.png)
+
+**Records** — book-keeping, always scoped to a period.
+
+<!-- IMAGE: records at ~1400px, period sidebar visible on the left with a day
+     selected, client rollup and job history populated, costs showing. -->
+![Records](docs/images/records.png)
+
+---
 
 ## Stack
 
-| Piece    | What it does                                                   |
-| -------- | -------------------------------------------------------------- |
-| Astro 7  | Pages, SSR, and the client bundle. No UI framework — the board is vanilla TS. |
-| Hono 4   | The JSON API, mounted ahead of Astro's router in `src/fetch.ts`. |
-| D1       | SQLite at the edge, via Drizzle 1.0-rc. Holds everything, previews included. |
-| Wrangler | Local runtime (workerd through `@cloudflare/vite-plugin`) and deploys. |
+| Piece | What it does |
+| --- | --- |
+| **Astro 7** | Pages, SSR, and the client bundle. No UI framework — the board is vanilla TypeScript. |
+| **Hono 4** | The JSON API, mounted ahead of Astro's router in `apps/web/src/fetch.ts`. |
+| **Cloudflare D1** | SQLite at the edge, via Drizzle 1.0-rc. Holds everything, plate previews included. |
+| **Wrangler** | Local runtime (workerd through `@cloudflare/vite-plugin`) and deploys. |
+
+No runtime dependencies beyond those. The `.3mf` parser, the ZIP reader and
+writer, and the `.xlsx` writer are all hand-rolled on web standards, so they run
+unchanged in a Worker and in a browser.
+
+---
+
+## Project structure
 
 ```
-apps/web            Astro app: pages, client scripts, and the Hono API
-  src/fetch.ts        entrypoint — API routes first, then Astro
-  src/server/         routes, queries, validation, bindings
-  src/scripts/        client-side board and intake controllers
-packages/db         Drizzle schema, migrations, D1 client
-packages/shared     domain types, queue maths, printer catalogue, .3mf parser
+apps/web/                     the Astro app — pages, client scripts, and the API
+  src/
+    fetch.ts                  entrypoint: API routes mount before Astro's router
+    layouts/Shell.astro       page chrome and navigation
+    pages/
+      index.astro             Board — operate the queue
+      intake.astro            Intake — get work in, register printers
+      records.astro           Records — book-keeping
+    scripts/                  client-side controllers (vanilla TS, no framework)
+      board.ts                lanes, drag-and-drop, countdown, edit dialog
+      intake.ts               upload, plate selection, promise dates, printers
+      records.ts              period scoping, client rollups, rates
+      cards.ts                the one job-card builder, shared by every lane
+      dom.ts                  typed DOM lookups — see INTERNALS for why
+      api.ts                  fetch wrapper and toasts
+    server/
+      context.ts              D1 binding via cloudflare:workers
+      queries.ts              board and records loaders (fan-out, not joins)
+      records.ts              book-keeping aggregation and report building
+      routes/                 jobs · files · printers · records
+      schemas.ts              zod request validation
+    styles/app.css            design tokens and shared components
+  wrangler.jsonc              bindings and migrations directory
+
+packages/db/                  schema, migrations, D1 client
+  src/schema.ts               the whole data model, with design notes
+  migrations/                 drizzle-kit output (source of truth)
+  migrations-d1/              flat mirror that wrangler can apply
+  scripts/sync-d1-migrations.mjs
+
+packages/shared/              runtime-agnostic domain logic
+  src/threemf.ts              .3mf metadata parser
+  src/zip.ts                  dependency-free ZIP reader
+  src/zip-write.ts            dependency-free ZIP writer
+  src/xlsx.ts                 minimal SpreadsheetML writer
+  src/queue.ts                scheduling, deadline pressure, costing
+  src/printers.ts             Bambu model catalogue and compatibility
+  src/types.ts                domain types
+
+docs/INTERNALS.md             how the interesting parts work
+CLAUDE.md                     build plan, positioning, and rejected approaches
 ```
 
-## Running it
+---
+
+## Running it locally
 
 ```bash
 pnpm install
@@ -44,62 +172,18 @@ pnpm --filter @bambu-organize/web db:apply:local
 pnpm --filter @bambu-organize/web dev
 ```
 
+Then open <http://localhost:4321>.
+
 Local D1 lives under `apps/web/.wrangler/` — delete that directory to start
 from an empty database. Note that miniflare keys local state by `database_id`,
 so changing that id in `wrangler.jsonc` also gives you a fresh local database.
 
-### Pages
+> **Do not run `astro build` or `astro check` while the dev server is running.**
+> They share `node_modules/.vite`, and a build rewrites the dependency cache
+> underneath the live server, which then 500s on every request. Stop it first:
+> `astro dev stop && rm -rf node_modules/.vite`.
 
-One page, one role, so there is never a question of where a control belongs:
-
-| Page | Role |
-| ---- | ---- |
-| `/` | **Board** — operate the queue: order it, start and finish prints. Full-bleed. |
-| `/intake` | **Intake** — get work in: upload a `.3mf`, add a job by hand, register the machines. |
-| `/records` | **Records** — book-keeping: clients, job history, paused work, filament and cost. |
-
-Jobs marked paused, finished or failed leave the board and appear in Records.
-They are never deleted — that lane simply does not exist on the board, which
-is what previously made pausing look like deleting.
-
-Records is always **scoped to a period** — there is deliberately no all-time
-view, because nobody reads a business's whole history in one scroll and the
-page would get slower every month it ran. The sidebar offers:
-
-- **Periods** — Last 14 days, This month, Last month
-- **Days** — the last seven, individually
-- **Earlier** — whole months, listed only when they actually contain work, so
-  the list cannot outgrow what the workshop has done
-
-Picking one scopes the totals, the client rollup, the history *and* the export
-buttons together, so what downloads is what was on screen. Days are local
-calendar days, not UTC — a print finishing at 01:00 belongs to the day the
-workshop lived, not the previous one.
-
-Board cards have an **edit** button (✎) covering title, client, deadline,
-duration, copies, changeover, printer, rush and notes. Editing the duration of
-a job whose time came from a `.3mf` re-marks the estimate as manual, and the
-dialog says so before you do it.
-
-Width comes from `Shell.astro`'s `width` prop (`full` or `readable`); pages
-should not set their own `max-width`.
-
-### Types
-
-Binding types are generated, never hand-written: `wrangler types` reads
-`wrangler.jsonc` and writes `apps/web/worker-configuration.d.ts`, so `Env`
-cannot drift from the bindings actually configured. The `dev`, `build` and
-`check` scripts all run it first.
-
-That file also brings the workerd runtime types into the same TypeScript
-program as `lib.dom`, and the two `Element` declarations merge into something
-that satisfies neither — which breaks the constraints on `querySelector<T>`,
-`closest<T>` and friends. All client-side DOM lookups therefore go through
-[`src/scripts/dom.ts`](apps/web/src/scripts/dom.ts), which contains the whole
-problem in one small module. Use `qs` / `must` / `qsa` / `closest` from there
-rather than the raw generic DOM methods.
-
-### Schema changes
+### Changing the schema
 
 ```bash
 pnpm --filter @bambu-organize/db generate
@@ -107,228 +191,97 @@ pnpm --filter @bambu-organize/db generate
 
 `drizzle-kit` writes `packages/db/migrations/<stamp>/migration.sql`; the same
 command mirrors it into `packages/db/migrations-d1/` as the flat files
-`wrangler d1 migrations apply` expects. Apply with the `db:apply:local` script
-above.
+`wrangler d1 migrations apply` expects. Apply it with `db:apply:local` above.
 
-### Deploying
+---
 
-Create the real resources and put the D1 id into `apps/web/wrangler.jsonc`:
+## Deploying
+
+Create the database:
 
 ```bash
-wrangler d1 create bambu_organize
+npx wrangler d1 create bambu_organize
 ```
 
-Put the returned id on the **`DB`** binding in `wrangler.jsonc` — `wrangler`
-appends a *new* binding rather than filling in the existing one, and the app
-reads `env.DB`, so a stray second binding means the app talks to a database
-that was never migrated.
+Put the returned id on the **`DB`** binding in `apps/web/wrangler.jsonc`.
 
-Then `pnpm --filter @bambu-organize/web build` and `wrangler deploy`. Note that
-the app currently has **no authentication** — put it behind Cloudflare Access
-or add a login before exposing it beyond a LAN.
+> `wrangler d1 create` **appends a new binding** rather than filling in the
+> existing one. The app reads `env.DB`, so a stray second binding means it will
+> talk to a database that was never migrated — and the failure looks like an
+> empty app rather than an error.
 
-## What we read out of a `.3mf`
+Apply the migrations to the remote database, then build and ship:
 
-A `.3mf` is a zip. Bambu Studio writes its slicing results into
-`Metadata/slice_info.config`, one `<plate>` block per plate:
-
-| Field                  | Used for                                                        |
-| ---------------------- | --------------------------------------------------------------- |
-| `prediction` (seconds) | The job's duration. This is the number the printer counts down.  |
-| `weight` (grams)       | Filament planning; shown per job and per plate.                  |
-| `<filament>` entries   | Type, colour, AMS slot, metres and grams — the swatches on cards.|
-| `printer_model_id`     | e.g. `BL-P001`. Matched against registered printers to flag a plate sliced for the wrong machine. |
-| `nozzle_diameters`     | Same, for nozzle mismatches.                                     |
-| `support_used`, `timelapse_type`, `label_object_enabled` | Badges. |
-| `<object>` entries     | Object count and names.                                          |
-
-Alongside it, `Metadata/model_settings.config` gives plate names,
-`Metadata/project_settings.config` gives the full slicing profile (layer
-height, bed type, filament list), `Metadata/plate_N.png` is the preview shown
-on cards, and `Metadata/plate_N.gcode` — present only in a *sliced* export —
-is what makes a file directly sendable to a printer later.
-
-Parsing lives in `packages/shared/src/threemf.ts` on top of a small
-dependency-free zip reader (`zip.ts`) built on `DecompressionStream`, so it
-runs unchanged in workerd and in the browser.
-
-**The uploaded archive is not kept.** It is parsed in memory, the plate preview
-is extracted, and the bytes are discarded. Real files run 1.3-4.9 MB, D1 caps
-any row at 2 MB, and R2 needs a payment card on the account — but more to the
-point, nothing ever read the original back. Only the preview is stored, in
-`plate_thumbnails` (base64, 18-22 KB each, roughly 18,000 of them before the
-500 MB per-database cap). Re-upload is the recovery path. If printer control
-ever needs to send the file, that is the moment to add object storage back.
-
-A project `.3mf` saved before slicing has no `slice_info.config`. That is not
-an error: the file record is still created, and the upload returns a warning
-telling the user to slice it or enter a duration by hand.
-
-## The board
-
-Row 1 — **Inbox**: everything added but not committed to a machine. Cards carry
-a coloured spine keyed on **slack** — time until the deadline *minus* how long
-the print takes — so a 4h job due tomorrow at 21:00 turns orange at 17:00
-today, not at 21:00:
-
-| Colour | Slack |
-| ------ | ----- |
-| Red | deadline passed, **or** not enough time left to print it at all |
-| Orange | under 24h |
-| Yellow | under 3 days |
-| Green | under 7 days |
-| Grey | more than 7 days |
-| Neutral | no deadline — not "safe", just no target |
-
-Thresholds live in `deadlineUrgency()` in `packages/shared/src/queue.ts` and
-nowhere else; the Excel export calls the same function.
-
-Row 2 — **Queue** then **Now printing**, reading right-to-left into the
-machine. The queue's *rightmost* card is the one that goes on next and carries
-a "Next up" badge, so it sits directly beside the printer panel. There is no
-separate next-up column: being next is just being at the head.
-
-Row 3 — **Projected schedule**: a placeholder. It renders the timeline the
-queue maths already produces, and is meant to be replaced once row 3 has a
-defined scope.
-
-### Job titles
-
-Every plate inside a `.3mf` is called "Plate 1", so jobs from different
-customers were a wall of identical titles separated only by thumbnail. Titles
-generated from a file are composed client-first:
-
-```
-Mohamed Esam (Fidget_Karambit)[Plate 1]
+```bash
+pnpm --filter @bambu-organize/web db:apply:remote
 ```
 
-falling back to `Fidget_Karambit [Plate 1]` with no client, via
-`composeJobTitle()` in `packages/shared/src/queue.ts`. Manually-added jobs keep
-whatever title was typed. The client name is *denormalised* into the title, so
-renaming a client later will not rewrite existing job titles — worth knowing
-when the edit-job screen lands.
+```bash
+pnpm --filter @bambu-organize/web build && npx wrangler deploy
+```
 
-### What it does that a spreadsheet cannot
+### Before you share the URL
 
-A due-date column tells you *that* a job is due Thursday. It cannot tell you
-that Thursday stops being possible once one more job goes in front of it. Two
-features come out of that, and they are the reason this exists:
+**The app has no authentication.** Anyone with the link can add, edit and
+delete jobs. The intended gate is
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+in front of the hostname — free for up to 50 users, with one-time-PIN login, so
+there are no passwords, no user tables and no auth code in this repo.
 
-**Latest safe slot.** Every queued job with a deadline shows how much room it
-has left, as an instruction rather than a warning:
+Access attaches to a hostname in your Cloudflare account, so this needs a custom
+domain rather than a bare `*.workers.dev` URL.
 
-| Chip | Meaning |
-| ---- | ------- |
-| `move up 2` | misses its deadline here; moving it up 2 places fixes it |
-| `45m spare` | only 45m of extra work fits ahead of it before it slips (amber under an hour) |
-| `2d 5h spare` | comfortable |
-| `can't make it` | misses even as the very next print — the date needs re-agreeing |
+### Deploying to someone else's account
 
-Headroom is measured in **time, not queue positions**. Positions are an
-artifact of how many jobs happen to be queued: a job sitting last had zero
-positions of slack even with two days to spare, which fired constantly and
-meant nothing.
+Scope wrangler with their credentials rather than logging in as yourself:
 
-The board's summary leads with the count of broken promises, because that is
-the only part of it anyone has to act on.
+```bash
+export CLOUDFLARE_API_TOKEN=<theirs> && export CLOUDFLARE_ACCOUNT_ID=<theirs>
+```
 
-**Promise dates.** On intake, before a date is agreed with a customer:
-*"if you queue this now, ready 08:54 tomorrow — 23:24 today if it jumps the
-queue"*. It updates live as the duration, copies and plate selection change,
-and is computed from the work already committed to the machine.
+Then run the same commands. Do not run `wrangler login` while those are set —
+it would silently target your own account instead.
 
-Both come from `computeDeadlinePressure` and `promiseFinish` in
-`packages/shared/src/queue.ts`. Nothing is stored — they are recomputed on
-render, so they stay true as the printer runs ahead of or behind estimate.
+---
 
-Dragging is plain HTML5 drag-and-drop. Every drop posts to `POST /api/jobs/move`
-with the destination lane's full id list *after* the drop, and the server
-rewrites that lane's positions — so the stored order always matches what is on
-screen, with no fractional-index drift. Pointer/touch dragging is not wired up
-yet.
+## First-run configuration
 
-The queue lane is `flex-direction: row-reverse`, so DOM order stays head-first
-and only the drag hit-testing knows about the flip (`cardAtPoint` in
-`src/scripts/board.ts`). Getting that comparison wrong silently inverts every
-drop, so it is deliberately the single place the reversal leaks.
+1. **Register a printer** on the Intake page. The model matters: its code is how
+   a dropped `.3mf` is matched to the hardware it was sliced for, and a mismatch
+   is flagged on the card.
+2. **Set your rates** on Records — a machine rate per hour, and a price per
+   kilogram for each filament type. Only materials that appear in real jobs are
+   listed. Leave them at zero to skip costing entirely.
 
-Scheduling is projected, never stored: `computeQueueTimeline` walks the queue
-from an anchor that is the printer's live remaining time when telemetry
-exists, the running job's estimate when it doesn't, and "now" when the machine
-is idle.
+---
 
-## API
+## Status
 
-| Route                                       | Purpose                                        |
-| ------------------------------------------- | ---------------------------------------------- |
-| `GET /api/jobs/board`                       | Everything the board renders, in one payload.  |
-| `POST /api/jobs`                            | Create a job (manual, or from a plate).        |
-| `POST /api/jobs/from-file`                  | One job per plate of an uploaded file.         |
-| `POST /api/jobs/move`                       | Every drag: lane change and/or reorder.        |
-| `PATCH`/`DELETE /api/jobs/:id`              | Edit, remove.                                  |
-| `GET`/`POST`/`PATCH`/`DELETE /api/printers` | Printer registry.                              |
-| `GET /api/printers/models`                  | Bambu machine catalogue (model codes).         |
-| `POST /api/files`                           | Upload and parse a `.3mf`.                     |
-| `POST /api/files/inspect`                   | Parse without storing.                         |
-| `GET /api/files/:id/plates/:n/thumbnail`    | Extracted plate preview.                       |
-| `GET /api/jobs/:id/events`                  | A job's history.                               |
-| `GET /api/records`                          | Book-keeping payload.                          |
-| `PUT /api/records/settings`                 | Costing rates.                                 |
-| `GET /api/records/export?view=…&from=&to=`  | Clients or history for a window, as xlsx.      |
-| `GET /api/records/export?period=last-month` | Two-sheet report for the previous month.       |
+Working and in use. Not done:
 
-## Excel export
+- **Printer telemetry.** `printers.ip_address` / `access_code` and the whole
+  `printer_status` table exist for it, and the "now printing" card already
+  prefers live data when rows exist — nothing writes them yet, so progress is
+  currently projected from start time plus the slicer's estimate. Reading the
+  printer would make the schedule honest; controlling it is not the goal.
+- **Authentication.** None in the app, deliberately — see above.
+- **Touch dragging.** HTML5 drag-and-drop only.
+- **Exported times are UTC**, not workshop-local — see
+  [Known sharp edges](docs/INTERNALS.md#known-sharp-edges).
 
-All exports live on **Records** — the board exports were removed, since a
-snapshot of the current queue is worth far less than the history behind it.
+---
 
-- **Export period** — clients or history for whatever window is selected.
-- **Last month report** — one file, two sheets (clients + jobs), scoped to the
-  previous calendar month. This is the accounting export.
+## How it works
 
-Written by `packages/shared/src/xlsx.ts` on top of a small store-only zip
-writer (`zip-write.ts`) — the same OPC container a `.3mf` uses, so the codebase
-reads one zip format and writes another with no dependencies either way. It is
-a workbook rather than a CSV so dates stay dates and numbers stay sortable.
+The parts worth explaining — the `.3mf` parser, the spreadsheet writer, the
+scheduling algorithms, and the platform constraints that shaped the schema —
+are documented in **[docs/INTERNALS.md](docs/INTERNALS.md)**.
 
-## Costing
+`CLAUDE.md` is the build plan: phases, positioning, and a list of approaches
+that were tried and rejected, with reasons.
 
-Filament is priced **per type**, not with one universal rate — PLA and PETG do
-not cost the same, and the slicer already records the type and grams of every
-filament on a plate. The rates form lists only materials that appear in real
-jobs, so it never shows a catalogue of things the workshop does not own.
+---
 
-Machine time is billed on the print itself, not the changeover buffer: the
-buffer is scheduling slack, not something a customer pays for.
+## Licence
 
-Anything printed with a type that has no price set is reported rather than
-silently costed at zero — the client row carries a `*` and the footnote says
-why. Same for jobs added by hand, which have no filament data at all.
-
-## Query cost
-
-`loadBoard()` reads only `backlog`, `queued` and `printing`. It used to read
-every job ever created on every render, which was correct but got slower
-forever; closed and paused work is only ever shown on Records, which asks for
-it explicitly via `loadAllJobs()`.
-
-Measured on real data: a plate thumbnail is ~27 KB and dominates storage; a job
-row is ~181 bytes and an event ~140. At 20 jobs/week that is ~30 MB/year
-against D1's 500 MB per-database cap — roughly 17 years — and after a full year
-of history, 200 page loads a day is about 4% of the free daily read limit. No
-purging is needed; the export exists for accounting, not for cleanup.
-
-## Not done yet
-
-- **Direct printer control.** `printers.ip_address` / `access_code` and the
-  whole `printer_status` table exist for it, and the "now printing" card reads
-  from that table when it has rows — nothing writes them yet, so progress
-  currently comes from elapsed-time-versus-estimate. The bridge (MQTT over TLS
-  to the printer on port 8883, or the cloud API) is the next phase.
-- **Auth.** None in the app, deliberately. This is a single-tenant tool for one
-  workshop, so the plan is Cloudflare Access in front of the hostname (free up
-  to 50 users, one-time-PIN login) rather than users/sessions tables — see
-  `CLAUDE.md`, phase 2.5. Until that is configured, do not expose the
-  deployment beyond a LAN.
-- **Touch dragging.** HTML5 DnD only.
-- **Row 3.** Awaiting scope.
+MIT — see [LICENSE](LICENSE).

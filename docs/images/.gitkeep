@@ -1,0 +1,9 @@
+Screenshots referenced by ../../README.md go here:
+
+  board.png     the board, ~1600px wide — hero shot
+  pipeline.png  .3mf -> metadata -> job -> schedule diagram, ~1200px
+  intake.png    intake with a .3mf expanded, ~1400px
+  records.png   records with a period selected, ~1400px
+
+Each reference in the README has an HTML comment above it describing the
+intended content. Delete this file once all four exist.
