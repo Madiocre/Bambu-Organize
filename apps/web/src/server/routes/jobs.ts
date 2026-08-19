@@ -117,7 +117,12 @@ jobsRouter.post("/from-file", async (c) => {
   const db = getDb();
 
   const plates = await db.select().from(filePlates).where(eq(filePlates.fileId, body.fileId));
-  if (plates.length === 0) return badRequest(c, "No plates found for that file");
+  if (plates.length === 0) {
+    // Unreachable for uploads since files.ts rejects unsliced archives, but
+    // kept honest: this means the file record has no plates, not that the
+    // archive had none.
+    return badRequest(c, "That file has no plates recorded - try uploading it again");
+  }
 
   const [file] = await db.select().from(printFiles).where(eq(printFiles.id, body.fileId));
   const product = file ? fileStem(file.filename) : null;

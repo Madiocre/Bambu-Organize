@@ -89,10 +89,41 @@ reads defensively rather than trusting the types.
 - **Thumbnails are resolved in preference order**: whatever `model_settings`
   points at, then `plate_N.png`, then `plate_N_small.png` — and each candidate
   is checked for actual existence in the archive before use.
-- **An unsliced `.3mf` is a warning, not an error.** A project saved before
-  slicing has geometry but no `slice_info.config`, so there is no time
-  estimate. The file record is still created and the upload returns a warning
-  telling the user to slice it or type a duration.
+- **An unsliced `.3mf` is rejected at upload.** See below — this is the single
+  most common real-world failure.
+
+### Unsliced files, and why they are rejected
+
+The most common real failure: a `.3mf` downloaded from a model site, or saved
+from Bambu Studio without pressing Slice, **has plates but no print times**.
+
+Two archive states mean this, and both produce the same user-facing message:
+
+- `Metadata/slice_info.config` is absent entirely, or
+- it is present but contains **only a header with no `<plate>` blocks** — which
+  is what Bambu Studio 02.07.x writes. Observed across four real downloads: a
+  205-byte file, versus ~1 KB of plate data in a sliced one.
+
+The confusing part is that the *website* shows plates. Those come from
+`model_settings.config`, which describes an **arrangement** — which objects sit
+on which plate, with names and preview images. That is a different thing from a
+slice *result*. A file can have eight arranged plates and zero print times, and
+several of the tested downloads did.
+
+There is no fallback available: every entry of those archives was searched and
+no print time exists anywhere. The `print_time` matches inside
+`project_settings.config` are slicer *settings* (`fan_cooling_layer_time`,
+`machine_load_filament_time`), not an estimate.
+
+So `POST /api/files` rejects with `400` before writing anything, keeping
+zero-plate records out of the library. `parseThreeMf` exposes
+`hasSliceResults` so callers test a boolean rather than string-matching a
+warning, and `POST /api/files/inspect` stays permissive — it persists nothing,
+so it still returns the metadata and the warning for previewing a drop.
+
+A **partially** sliced project still works: if plate 1 is sliced and plate 2 is
+not, `slice_info` carries one plate block, and one usable plate is the correct
+result.
 
 ### The ZIP reader
 

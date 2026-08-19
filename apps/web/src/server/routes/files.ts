@@ -47,6 +47,17 @@ filesRouter.post("/", async (c) => {
     return badRequest(c, `Could not read that .3mf: ${(error as Error).message}`);
   }
 
+  // The app requires a sliced file: `prediction` is the only print time the
+  // format carries, and it is written by the slicer. Rejecting here rather
+  // than after the insert keeps zero-plate records out of the library, where
+  // they would look like a broken upload rather than an unsliced one.
+  if (!metadata.hasSliceResults) {
+    return badRequest(
+      c,
+      "This .3mf has not been sliced, so it carries no print times. Open it in Bambu Studio, slice the plate, then save the project and upload it again.",
+    );
+  }
+
   const db = getDb();
   const sha256 = await digest(upload.bytes);
 

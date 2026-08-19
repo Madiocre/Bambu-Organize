@@ -21,8 +21,11 @@ whether the order you have chosen will break a promise.
 ## What it does
 
 **Get work in**
-- Drop a `.3mf` — print time, filament type and weight, plate previews and the
-  printer model it was sliced for are read straight out of the file
+- Drop a **sliced** `.3mf` — print time, filament type and weight, plate
+  previews and the printer model it was sliced for are read straight out of the
+  file. Print time only exists once the slicer has run, so a project saved
+  without slicing (and most model-site downloads) is rejected with a message
+  saying so.
 - One job per plate, so a four-plate project becomes four schedulable jobs
 - Add jobs by hand when there is no file yet
 - Client, deadline and notes are captured at intake — the `.3mf` carries none

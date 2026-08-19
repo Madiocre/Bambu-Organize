@@ -86,6 +86,12 @@ export interface ThreeMfMetadata {
   slicer?: { client?: string; version?: string };
   plates: ThreeMfPlate[];
   profile?: ThreeMfProfile;
+  /**
+   * False when the archive was saved without slicing. Callers should test this
+   * rather than string-matching a warning - the app requires a sliced file,
+   * because print time exists nowhere else in the format.
+   */
+  hasSliceResults: boolean;
   /** True when the archive contains plate gcode, i.e. it can be sent to a printer as-is */
   hasGcode: boolean;
   totalPredictionSec: number;
@@ -103,14 +109,6 @@ export async function parseThreeMf(bytes: Uint8Array): Promise<ThreeMfMetadata> 
   const warnings: string[] = [];
 
   const sliceInfo = await zip.readText(SLICE_INFO);
-  if (!sliceInfo) {
-    // A .3mf saved before slicing has geometry but no estimates. Still worth
-    // keeping as a file record - the user just has to type a duration.
-    warnings.push(
-      "No slice_info.config in this .3mf - it was saved before slicing, so there is no print-time estimate. Slice it in Bambu Studio and re-export, or enter the duration by hand.",
-    );
-  }
-
   const { slicer, plates } = sliceInfo ? parseSliceInfo(sliceInfo) : { slicer: undefined, plates: [] };
 
   const modelSettings = await zip.readText(MODEL_SETTINGS);
@@ -139,8 +137,18 @@ export async function parseThreeMf(bytes: Uint8Array): Promise<ThreeMfMetadata> 
     }
   }
 
-  if (sliceInfo && plates.length === 0) {
-    warnings.push("slice_info.config contained no plates.");
+  // Two archive states mean the same thing to a user: the file was never
+  // sliced. Either `slice_info.config` is absent, or - as Bambu Studio 02.07.x
+  // writes it - it is present but contains only a header with no <plate>
+  // blocks. Plates may still be defined in `model_settings.config`, which is
+  // what a model site displays, but those are an *arrangement*; print time
+  // only exists once the slicer has run, and nothing else in the archive
+  // carries it.
+  const hasSliceResults = plates.length > 0;
+  if (!hasSliceResults) {
+    warnings.push(
+      "This .3mf has not been sliced, so it carries no print times. Open it in Bambu Studio, slice the plate, then save the project and upload it again.",
+    );
   }
 
   const projectSettings = await zip.readText(PROJECT_SETTINGS);
@@ -150,6 +158,7 @@ export async function parseThreeMf(bytes: Uint8Array): Promise<ThreeMfMetadata> 
     slicer,
     plates,
     profile,
+    hasSliceResults,
     hasGcode: plates.some((p) => p.gcodePath) || zip.find((n) => n.endsWith(".gcode")).length > 0,
     totalPredictionSec: plates.reduce((sum, p) => sum + (p.predictionSec ?? 0), 0),
     totalWeightG: plates.reduce((sum, p) => sum + (p.weightG ?? 0), 0),
